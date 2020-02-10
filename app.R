@@ -10,6 +10,9 @@ library(shiny)
 library(leaflet)
 library(RColorBrewer)
 library(tidyverse)
+## data files
+ncov_df<-read_csv("ncov_outside_hubei.csv")
+attach(ncov_df)
 
 ui <- bootstrapPage(
   tags$style(type = "text/css", "html, body {width:100%;height:100%}"),
@@ -60,8 +63,6 @@ server <- function(input, output, session) {
   
   # Use a separate observer to recreate the legend as needed.
   observe({
-    ncov_df<-read_csv("ncov_outside_hubei.csv")
-    attach(ncov_df)
     proxy <- leafletProxy("map", data = ncov_df)
     
     # Remove any existing legend, and only if the legend is
