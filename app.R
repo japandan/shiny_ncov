@@ -28,7 +28,8 @@ server <- function(input, output, session) {
   # Reactive expression for the data subsetted to what the user selected
   filteredData <- reactive({
     print(input$range)
-    ncov_df
+    ## return the first rows as specified by input slider and columns 1-14
+    return(ncov_df[c(1:input$range),c(1:14)])
   })
   
   
