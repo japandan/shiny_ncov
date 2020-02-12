@@ -10,7 +10,32 @@ library(shiny)
 library(leaflet)
 library(RColorBrewer)
 library(tidyverse)
-## data files
+library(RgoogleMaps)
+library(RCurl)
+
+## flag to change between internet and local mapTiles provider
+localMap<-TRUE
+## initial Zoom level for map and restrictions on zoom to limit mapTiles required
+defaultZoom<-3
+lowZoom<-3
+highZoom<-5
+print(paste0("defaultZoom:",defaultZoom))
+print(paste0("lowZoom:",lowZoom))
+print(paste0("highZoom:", highZoom))
+##tile provider
+## OSM provider organizes tile/z/x/y
+## Esri organizes tile/z/y/x
+## different providers in different directories.  Default is OSM
+#addResourcePath("EsriTiles", "H:/R/ncov/mapTiles/ESRIWorldStreetMap")
+addResourcePath("OSMTiles",   "mapTiles/OSM")
+addResourcePath("googleTiles",  "mapTiles/google")
+## This does not see to work but I think the URL is correct
+tileServer<-"http://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}.png"
+## Focus of map -Hebei, China
+focusLon<-70
+focusLat<-30.5
+
+## get datafile
 ncov_df<-read_csv("ncov_outside_hubei.csv")
 attach(ncov_df)
 
@@ -18,33 +43,85 @@ ui <- bootstrapPage(
   tags$style(type = "text/css", "html, body {width:100%;height:100%}"),
   leafletOutput("map", width = "100%", height = "100%"),
   absolutePanel(top = 10, right = 10,
+               
                 sliderInput("range", "Cases to include", 0, nrow(ncov_df),
                            value = 1
                 ),
 
-                checkboxInput("legend", "Show legend", TRUE)
-  )
+                checkboxInput("localMap", "Use Local Map", localMap))
 )
 
+downloadMap<-function() {
+  print("Using local map")
+  ## load tiles for offline use
+  lat_range=c(0, focusLat+40)
+  lon_range=c(0, focusLon+40)
+  print(paste0("lat range:", lat_range))
+  print(paste0("lon range:", lon_range))
+  
+  ## load tiles for variety of Zoom levels
+  for (zoom in lowZoom:highZoom) {
+    
+    message( paste0("Downloading mapTiles for zoom level=",zoom,"\n") )
+    print(paste("tileServer URL:",tileServer))
+    GetMapTiles(center=c( focusLat, lat=focusLon), 
+                lonR=c(-140,150), latR=c(0,70),
+                zoom=zoom,
+   #             type="Esri.WorldStreetMap",
+   #             urlBase=tileServer,    NOT WORKING, defaults to google tileserver
+                tileDir="mapTiles/google",
+                CheckExistingFiles = TRUE,  ## force it to download tiles for testing
+                returnTiles=TRUE,
+                verbose=1
+    )
+    message( "\n...Downloading of mapTiles complete \n" )
+    ## print some kind of loading message on map?
+  
+  }
+
+}
+
 server <- function(input, output, session) {
+  
+  ## close the app if the browser is closed
+  session$onSessionEnded(function() {
+    print("Browser closed. Goodbye!")
+    stopApp()
+  })
+
+  #  download map tiles if needed
+  #if ((readline("Download tiles? (y/n)?")=="y")) {downloadMap()}
   
   # Reactive expression for the data subsetted to what the user selected
   filteredData <- reactive({
     print(input$range)
-    ## return the first rows as specified by input slider and columns 1-14
     return(ncov_df[c(1:input$range),c(1:14)])
   })
-  
-  
+  ## for debugging, show the zoom level to decide how many to downloads
+
   ##  show the map with focus on China
   ##  Use a provider "Esri" that shows country names in English
   output$map <- renderLeaflet({
     # Use leaflet() here, and only include aspects of the map that
     # won't need to change dynamically (at least, not unless the
     # entire map is being torn down and recreated).
-    leaflet() %>% 
-    setView(lng=114.27, lat=30.59, zoom=3) %>%  
-    addProviderTiles(providers$Esri.WorldStreetMap)  ##shows city names as well in English
+
+    if (localMap){ 
+      print("using local map")
+      leaflet(options = leafletOptions(minZoom = lowZoom, maxZoom = highZoom)) %>% 
+        setView(lng=focusLon, lat=focusLat, zoom=3) %>%  
+      #  setMaxBounds( lng1 = -87.94011 , lat1 = 41.64454, lng2 = -87.52414, lat2 = 42.02304 ) %>%
+        addTiles(urlTemplate="/googleTiles/{z}_{x}_{y}.png")
+    } else {
+      print("using internet map")
+      leaflet(options = leafletOptions(minZoom = lowZoom, maxZoom = highZoom)) %>% 
+        setView(lng=focusLon, lat=focusLat, zoom=3) %>%  
+        addProviderTiles(providers$Esri.WorldStreetMap)
+
+    }
+      
+#    urlBase="http:/a.tile.openstreetmap.org" %>%
+#    addProviderTiles(providers$Esri.WorldStreetMap)  ##shows city names as well in English
 
   })
   
@@ -56,21 +133,31 @@ server <- function(input, output, session) {
     
     leafletProxy("map", data = filteredData()) %>%
       clearShapes() %>%
-      addCircles(radius = 1, weight = 1, color = "red",
+      addCircles(radius = 2, weight = 1, color = "red",
                 fillOpacity = 0.7
-      )
+      ) ## %>% addMarkers(lng=focusLon, lat=focusLat)
   })
   
   # Use a separate observer to recreate the legend as needed.
   observe({
-    proxy <- leafletProxy("map", data = ncov_df)
-    
-    # Remove any existing legend, and only if the legend is
-    # enabled, create a new one.
+    ## filter the data to the number of observations chosen by the user
+    proxy <- leafletProxy("map", data = filteredData())
+
     proxy %>% clearControls()
-    if (input$legend) {
-      print("Show data on the table")
-    ##  proxy %>% addLegend(position = "bottomleft")
+  
+    ## Display the local or internet version of the map
+    ## depending on which option was selected by the user
+    localMap<-input$localMap
+    if (localMap){
+      leafletProxy("map") %>% 
+        setView(lng=focusLon, lat=focusLat, zoom=3) %>%  
+        addTiles(urlTemplate="/googleTiles/{z}_{x}_{y}.png")
+      
+    } else {
+      
+      leafletProxy("map") %>% 
+        setView(lng=focusLon, lat=focusLat, zoom=3) %>%  
+        addProviderTiles(providers$Esri.WorldStreetMap)
     }
   })
 }
